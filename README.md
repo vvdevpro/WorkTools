@@ -29,3 +29,14 @@
 | 🛡️ **三级异常容错** | 进程级、文件级、页级三级异常捕获，确保任务不崩溃 |
 
 > 查看详细说明 → [`pdf查找关键字/batch_extract_proV4-说明文档.md`](./pdf查找关键字/batch_extract_proV4-说明文档.md)
+
+### [🚫 禁用 Windows 自动更新](./禁用win自动更新)
+
+基于批处理脚本（`.bat`）的 Windows 自动更新禁用/恢复工具，通过注册表策略 + 服务禁用 + 计划任务三重机制彻底控制系统更新行为：
+
+| 脚本 | 说明 |
+|------|------|
+| 🛑 **`Disable_WinUpdate.bat`** | 禁用更新组策略、停服（wuauserv/UsoSvc/WaaSMedicSvc）、修改服务启动类型为「禁用」、禁用更新计划任务 |
+| ✅ **`Enable_WinUpdate.bat`** | 还原注册表策略、恢复服务默认启动类型（手动/自动）、重新启动更新服务、启用更新计划任务 |
+
+> 查看详细说明 → [`禁用win自动更新/Disable_WinUpdate.bat`](./禁用win自动更新/Disable_WinUpdate.bat) · [`禁用win自动更新/Enable_WinUpdate.bat`](./禁用win自动更新/Enable_WinUpdate.bat)
