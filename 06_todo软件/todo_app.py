@@ -16,7 +16,6 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = Path(__file__).parent
 DATA_FILE = APP_DIR / "todo_data.json"
-W = 310
 
 
 # ═══════════ 数据管理 ═══════════
@@ -25,7 +24,12 @@ class DM:
         self.d = {
             "tasks": [],
             "history": [],
-            "settings": {"auto_start": False},
+            "settings": {
+                "auto_start": False,
+                "red_days": 3,
+                "window_width": 310,
+                "window_height": 420,
+            },
         }
         self._load()
 
@@ -51,7 +55,10 @@ class DM:
         return self.d.get("settings", {})
 
     def add(self, text):
-        self.d.setdefault("tasks", []).append({"text": text, "done": False})
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.d.setdefault("tasks", []).append(
+            {"text": text, "done": False, "created_at": now}
+        )
         self._sort()
         self._save()
 
@@ -79,7 +86,15 @@ class DM:
     def restore_one(self, i):
         if 0 <= i < len(self.d.get("history", [])):
             it = self.d["history"].pop(i)
-            self.d["tasks"].append({"text": it["text"], "done": True})
+            # 恢复时保留原始的created_at字段
+            restored_task = {
+                "text": it["text"],
+                "done": True,
+                "created_at": it.get(
+                    "created_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ),
+            }
+            self.d["tasks"].append(restored_task)
             self._sort()
             self._save()
             return True
@@ -89,7 +104,15 @@ class DM:
         h = self.d.get("history", [])
         c = len(h)
         for it in h:
-            self.d["tasks"].append({"text": it["text"], "done": True})
+            # 恢复时保留原始的created_at字段
+            restored_task = {
+                "text": it["text"],
+                "done": True,
+                "created_at": it.get(
+                    "created_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ),
+            }
+            self.d["tasks"].append(restored_task)
         self.d["history"] = []
         self._sort()
         self._save()
@@ -102,6 +125,12 @@ class DM:
     def update_setting(self, k, v):
         self.d.setdefault("settings", {})[k] = v
         self._save()
+
+    def reorder_tasks(self, new_order):
+        """重新排序任务，new_order是任务索引列表"""
+        if len(new_order) == len(self.d["tasks"]):
+            self.d["tasks"] = [self.d["tasks"][i] for i in new_order]
+            self._save()
 
     def _sort(self):
         self.d["tasks"] = sorted(self.d["tasks"], key=lambda t: t["done"])
@@ -226,7 +255,12 @@ html, body {
     font-size: 13px;
     box-shadow: var(--shadow);
     cursor: default;
+    user-select: none;
+    transition: opacity 0.2s, transform 0.2s, background 0.2s;
 }
+.task-card[draggable="true"] { cursor: move; }
+.task-card:hover { background: #fafafa; }
+.task-card[draggable="true"]:active { transform: scale(1.02); }
 .task-card .check {
     width: 20px; height: 20px;
     border-radius: 50%;
@@ -267,6 +301,26 @@ html, body {
 }
 .task-card:hover .del { color: var(--dim); }
 .task-card .del:hover { color: var(--red) !important; }
+
+.task-meta {
+    display: flex; flex-direction: column; gap: 2px;
+    align-items: flex-end; flex-shrink: 0;
+    margin-left: 8px;
+}
+
+.task-time {
+    font-size: 11px; color: var(--dim);
+    white-space: nowrap;
+}
+
+.task-days {
+    font-size: 11px; color: var(--dim);
+    white-space: nowrap;
+}
+
+.task-days.days-old {
+    color: var(--red); font-weight: 600;
+}
 
 /* ── 输入栏 (固定) ── */
 #input-bar {
@@ -444,6 +498,15 @@ input[type=range]::-webkit-slider-thumb {
 .btn.red:hover { background: #ff6b60; }
 
 .empty-msg { text-align: center; color: var(--dim); padding: 30px 0; font-size: 13px; }
+
+#resize-handle {
+    position: fixed; bottom: 0; right: 0;
+    width: 14px; height: 14px;
+    cursor: se-resize; background: linear-gradient(135deg, transparent 50%, var(--dim) 50%);
+    opacity: 0.3; z-index: 1000; pointer-events: all;
+    transition: opacity 0.2s;
+}
+#resize-handle:hover { opacity: 0.6; }
 </style>
 </head>
 <body>
@@ -474,6 +537,9 @@ input[type=range]::-webkit-slider-thumb {
         <div class="btn-act primary" onclick="openHistory()">历史记录</div>
         <span id="count"></span>
     </div>
+    
+    <!-- 调整大小把手 -->
+    <div id="resize-handle"></div>
 </div>
 
 <!-- Toast 提示 -->
@@ -490,6 +556,13 @@ input[type=range]::-webkit-slider-thumb {
             <div class="setting-row">
                 <span class="label">开机自启动</span>
                 <div class="toggle-switch" id="auto-toggle" onclick="toggleAuto()"></div>
+            </div>
+            <div class="setting-row">
+                <span class="label">逾期天数提醒</span>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="range" id="red-days-slider" min="1" max="30" value="3" oninput="updateRedDays(this.value)" onchange="updateRedDays(this.value)">
+                    <span id="red-days-value" style="font-size: 13px; min-width: 30px;">3</span>
+                </div>
             </div>
             <div style="text-align:center;padding:16px 0 4px;font-size:11px;color:var(--dim);">
                 made by vv<br>vvdevpro@gmail.com
@@ -555,16 +628,55 @@ async function init() {
     settings = await pywebview.api.get_settings();
     render();
     document.getElementById('auto-toggle').classList.toggle('on', settings.auto_start);
+    // 初始化红字天数滑块
+    let redDays = settings.red_days || 3;
+    document.getElementById('red-days-slider').value = redDays;
+    document.getElementById('red-days-value').textContent = redDays;
+    
+    // 初始化窗口大小调整把手
+    let resizeHandle = document.getElementById('resize-handle');
+    if (resizeHandle) {
+        resizeHandle.addEventListener('mousedown', function(e) {
+            isResizing = true;
+            startX = e.screenX;
+            startY = e.screenY;
+            startWidth = window.innerWidth;
+            startHeight = window.innerHeight;
+            e.preventDefault();
+        });
+    }
 }
 window.addEventListener('pywebviewready', init);
 
 // ═══════ 渲染 ═══════
+function getDaysDiff(createdAt) {
+    if (!createdAt) return null;
+    let created = new Date(createdAt);
+    let today = new Date();
+    let diff = Math.floor((today - created) / (1000 * 60 * 60 * 24));
+    return diff > 0 ? diff : null;
+}
+
 function render() {
+    let redDaysThreshold = settings.red_days || 3;
     let html = '';
     tasks.forEach((t, i) => {
-        html += `<div class="task-card ${t.done ? 'done' : ''}" ondblclick="${t.done ? `toggle(${i})` : ''}">
+        // 只为未完成的任务计算逾期时间
+        let daysDiff = !t.done ? getDaysDiff(t.created_at) : null;
+        let timeDisplay = t.created_at ? t.created_at.substring(0, 10) : '';
+        // 只有超过阈值时才显示逾期提醒
+        let isOld = daysDiff && daysDiff >= redDaysThreshold;
+        let daysStr = isOld ? `已过 ${daysDiff} 天` : '';
+        let daysClass = isOld ? 'days-old' : '';
+        let isDraggable = !t.done; // 只有未完成的任务可以拖拽
+        
+        html += `<div class="task-card ${t.done ? 'done' : ''}" ${isDraggable ? `draggable="true" ondragstart="dragStart(event, ${i})" ondragover="dragOver(event)" ondrop="dragDrop(event, ${i})" ondragend="dragEnd(event)"` : ''} ondblclick="${t.done ? `toggle(${i})` : ''}">
             <div class="check" onclick="toggle(${i})">${t.done ? '✓' : ''}</div>
             <div class="text" title="${esc(t.text)}" onclick="openDetail(${i})" style="cursor:pointer;">${trunc(esc(t.text), 18)}</div>
+            <div class="task-meta">
+                <div class="task-time">${timeDisplay}</div>
+                ${daysStr ? `<div class="task-days ${daysClass}">${daysStr}</div>` : ''}
+            </div>
             <div class="del" onclick="del(${i})">✕</div>
         </div>`;
     });
@@ -729,7 +841,48 @@ async function toggleAuto() {
     document.getElementById('auto-toggle').classList.toggle('on', settings.auto_start);
 }
 
-// ═══════ 拖拽 ═══════
+async function updateRedDays(value) {
+    settings.red_days = parseInt(value);
+    document.getElementById('red-days-value').textContent = value;
+    await pywebview.api.update_setting('red_days', settings.red_days);
+    render(); // 重新渲染以更新红字显示
+}
+
+// ═══════ 任务拖拽排序 ═══════
+let draggedIdx = -1;
+
+function dragStart(e, idx) {
+    draggedIdx = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.style.opacity = '0.5';
+}
+
+function dragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+}
+
+async function dragDrop(e, targetIdx) {
+    e.preventDefault();
+    if (draggedIdx === targetIdx || draggedIdx === -1) return;
+    
+    // 交换任务位置
+    let newOrder = tasks.map((_, i) => i);
+    let temp = newOrder[draggedIdx];
+    newOrder[draggedIdx] = newOrder[targetIdx];
+    newOrder[targetIdx] = temp;
+    
+    await pywebview.api.reorder_tasks(newOrder);
+    tasks = await pywebview.api.get_tasks();
+    render();
+}
+
+function dragEnd(e) {
+    e.target.style.opacity = '1';
+    draggedIdx = -1;
+}
+
+// ═══════ 窗口拖拽 ═══════
 let dragging = false, startMX = 0, startMY = 0, startWX = 0, startWY = 0;
 document.getElementById('titlebar').addEventListener('mousedown', async function(e) {
     if (e.target.closest('.btns')) return;
@@ -747,6 +900,20 @@ document.addEventListener('mousemove', function(e) {
     );
 });
 document.addEventListener('mouseup', function() { dragging = false; });
+
+// ═══════ 窗口大小拖拽调整 ═══════
+let isResizing = false, startX = 0, startY = 0, startWidth = 0, startHeight = 0;
+
+document.addEventListener('mousemove', async function(e) {
+    if (!isResizing) return;
+    let newWidth = Math.max(280, startWidth + e.screenX - startX);
+    let newHeight = Math.max(300, startHeight + e.screenY - startY);
+    
+    // 调用 API 调整窗口大小并保存
+    await pywebview.api.set_window_size(newWidth, newHeight);
+});
+
+document.addEventListener('mouseup', function() { isResizing = false; });
 </script>
 </body>
 </html>
@@ -802,6 +969,10 @@ class TodoAPI:
         if key == "auto_start":
             set_auto(value)
 
+    def reorder_tasks(self, new_order):
+        """接收前端的新任务顺序"""
+        self.dm.reorder_tasks(new_order)
+
     def get_window_pos(self):
         if self._window:
             return [self._window.x, self._window.y]
@@ -810,6 +981,18 @@ class TodoAPI:
     def move_absolute(self, x, y):
         if self._window:
             self._window.move(int(x), int(y))
+
+    def set_window_size(self, width, height):
+        """调整和保存窗口大小"""
+        try:
+            if self._window:
+                # 尝试使用 resize 方法调整窗口大小
+                self._window.resize(int(width), int(height))
+        except Exception:
+            # 如果 resize 方法不可用，继续正常运行
+            pass
+        self.dm.update_setting("window_width", int(width))
+        self.dm.update_setting("window_height", int(height))
 
     def minimize(self):
         if self._window:
@@ -830,15 +1013,21 @@ def main():
     root.withdraw()
     sw = root.winfo_screenwidth()
     root.destroy()
-    x_pos = sw - W - 20
+
+    # 读取保存的窗口大小
+    settings = api.dm.settings()
+    w = settings.get("window_width", 310)
+    h = settings.get("window_height", 420)
+
+    x_pos = sw - w - 20
     y_pos = 20
 
     window = webview.create_window(
         title="Todo",
         html=HTML,
         js_api=api,
-        width=W,
-        height=420,
+        width=w,
+        height=h,
         x=x_pos,
         y=y_pos,
         frameless=True,
